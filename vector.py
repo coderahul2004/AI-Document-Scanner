@@ -7,91 +7,95 @@ from langchain_chroma import Chroma
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_community.document_loaders import PyPDFLoader
 from docx import Document as DocxDocument
-from config import GOOGLE_API_KEY, EMBEDDING_MODEL, CHROMA_DIR, COLLECTION_NAME
+from config import (
+    GOOGLE_API_KEY,
+    EMBEDDING_MODEL,
+    CHROMA_DIR,
+    COLLECTION_NAME
+)
 load_dotenv()
 def load_file(path):
-    ext = os.path.splitext(path)[1].lower()
-    name = os.path.basename(path)
-    docs = []
-    if ext == ".pdf":
-        docs = PyPDFLoader(path).load()
-        for page_no, doc in enumerate(docs, start=1):
-            doc.metadata.update({
-                "source": name,
+    extension = os.path.splitext(path)[1].lower()
+    file_name = os.path.basename(path)
+    documents = []
+    if extension == ".pdf":
+        documents = PyPDFLoader(path).load()
+        for page_number, document in enumerate(documents, start=1):
+            document.metadata.update({
+                "source": file_name,
                 "file_type": "pdf",
-                "page": page_no
+                "page": page_number
             })
-    elif ext == ".docx":
+    elif extension == ".docx":
         word_file = DocxDocument(path)
         text = "\n".join(
-            p.text for p in word_file.paragraphs
-            if p.text.strip()
+            paragraph.text
+            for paragraph in word_file.paragraphs
+            if paragraph.text.strip()
         )
         if text.strip():
-            docs.append(Document(
+            documents.append(Document(
                 page_content=text,
                 metadata={
-                    "source": name,
+                    "source": file_name,
                     "file_type": "docx"
                 }
             ))
-    elif ext in [".xlsx", ".csv"]:
-        if ext == ".xlsx":
-            df = pd.read_excel(path)
+    elif extension in [".xlsx", ".csv"]:
+        if extension == ".xlsx":
+            data = pd.read_excel(path)
         else:
-            df = pd.read_csv(path)
-        for i, row in df.iterrows():
-            row_text = "\n".join(
+            data = pd.read_csv(path)
+        for index, row in data.iterrows():
+            text = "\n".join(
                 f"{column}: {row[column]}"
-                for column in df.columns
+                for column in data.columns
                 if pd.notna(row[column])
             )
-            if row_text.strip():
-                docs.append(Document(
-                    page_content=row_text,
+            if text.strip():
+                documents.append(Document(
+                    page_content=text,
                     metadata={
-                        "source": name,
-                        "file_type": ext[1:],
-                        "row": int(i) + 1
+                        "source": file_name,
+                        "file_type": extension[1:],
+                        "row": int(index) + 1
                     }
                 ))
-    elif ext == ".txt":
+    elif extension == ".txt":
         with open(path, "r", encoding="utf-8-sig") as file:
             text = file.read()
         if text.strip():
-            docs.append(Document(
+            documents.append(Document(
                 page_content=text,
                 metadata={
-                    "source": name,
+                    "source": file_name,
                     "file_type": "txt"
                 }
             ))
     else:
-        raise ValueError(f"Unsupported file type: {ext}")
-    if not docs:
-        raise ValueError(f"No readable text found in {name}.")
-    return docs
-def get_vectorstore():
+        raise ValueError(f"Unsupported file type: {extension}")
+    if not documents:
+        raise ValueError(f"No readable text found in {file_name}.")
+    return documents
+def get_vectorstore(collection_name=None):
     embeddings = GoogleGenerativeAIEmbeddings(
         model=EMBEDDING_MODEL,
         google_api_key=GOOGLE_API_KEY
     )
     return Chroma(
-        collection_name=COLLECTION_NAME,
+        collection_name=collection_name or COLLECTION_NAME,
         embedding_function=embeddings,
         persist_directory=CHROMA_DIR
     )
-def create_vectorstore(documents=None):
-    db = get_vectorstore()
-    if not documents:
-        return db
-    sources = {
-        doc.metadata.get("source")
-        for doc in documents
-        if doc.metadata.get("source")
+def create_vectorstore(documents, collection_name=None):
+    db = get_vectorstore(collection_name)
+    file_names = {
+        document.metadata.get("source")
+        for document in documents
+        if document.metadata.get("source")
     }
-    for source in sources:
-        db.delete(where={"source": source})
+    for file_name in file_names:
+        db.delete(where={"source": file_name})
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=1000,
         chunk_overlap=200
@@ -100,7 +104,7 @@ def create_vectorstore(documents=None):
     if chunks:
         db.add_documents(chunks)
     return db
-def delete_document(file_name):
-    db = get_vectorstore()
+def delete_document(file_name, collection_name=None):
+    db = get_vectorstore(collection_name)
     db.delete(where={"source": file_name})
     return True
