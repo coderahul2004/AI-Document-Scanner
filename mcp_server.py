@@ -1,4 +1,4 @@
-from mcp.server import FastMCP
+from mcp.server.fastmcp import FastMCP
 from vector import get_vectorstore
 mcp = FastMCP("Universal RAG server")
 vectorstore = get_vectorstore()
