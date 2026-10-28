@@ -1,4 +1,5 @@
 import os
+import traceback
 import json
 import asyncio
 import streamlit as st
@@ -139,7 +140,10 @@ if question:
                 answer = result["answer"]
                 tool_calls = result["tool_calls"]
             except Exception as e:
-                answer = "Something went wrong: " + str(e)
+                
+                print("FULL AGENT ERROR:")
+                traceback.print_exc()
+                answer = f"Something went wrong: +{type(e).__name__}:{e}" 
                 tool_calls = []
         st.write(answer)
         show_tool_calls(tool_calls)
