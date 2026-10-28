@@ -4,3 +4,4 @@ uploads/
 __pycache__/
 venv/
 .venv/
+last_chat.json
