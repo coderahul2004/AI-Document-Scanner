@@ -10,7 +10,7 @@ try:
 except (KeyError, FileNotFoundError):
     GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
 
-MODEL_NAME = "gemini-2.5-flash"
+MODEL_NAME = "gemini-3.8-flash"
 EMBEDDING_MODEL = "gemini-embedding-001"
 CHROMA_DIR = "./chroma_db"
 COLLECTION_NAME = "universal_documents"
