@@ -139,12 +139,17 @@ if question:
                 result = asyncio.run(ask(question, history))
                 answer = result["answer"]
                 tool_calls = result["tool_calls"]
+            
             except Exception as e:
-                
                 print("FULL AGENT ERROR:")
-                traceback.print_exc()
-                answer = f"Something went wrong: +{type(e).__name__}:{e}" 
+                traceback.print_exception(type(e), e, e.__traceback__)
+
+                st.error("Detailed error for debugging:")
+                st.exception(e)
+
+                answer = f"Something went wrong: {type(e).__name__}: {e}"
                 tool_calls = []
+
         st.write(answer)
         show_tool_calls(tool_calls)
     st.session_state.messages.append(
