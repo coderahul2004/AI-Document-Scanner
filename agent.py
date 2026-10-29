@@ -8,6 +8,7 @@ from mcp.client.stdio import stdio_client, StdioServerParameters
 from config import GOOGLE_API_KEY, MODEL_NAME, FALLBACK_MODEL, COLLECTION_NAME
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 client = genai.Client(api_key=GOOGLE_API_KEY)
+RETRY_CODES = [429, 500, 503, 504]
 SYSTEM_PROMPT = """
 You are an AI document assistant.
 Use search_documents to answer questions about uploaded files.
@@ -18,7 +19,6 @@ If information is missing, say it was not found in the documents.
 Reply normally to greetings.
 """
 async def call_gemini(contents, settings):
-    last_error = "unknown error"
     for model in [MODEL_NAME, FALLBACK_MODEL]:
         for attempt in range(3):
             try:
@@ -28,15 +28,12 @@ async def call_gemini(contents, settings):
                     config=settings
                 )
             except errors.APIError as error:
-                last_error = f"{model} - {error.code}: {error.message}"
-                print("Gemini error:", last_error)
-                if error.code in (500, 503, 504):
-                    await asyncio.sleep(2 * (attempt + 1))
-                elif error.code in (404, 429):
+                if error.code == 404:           
                     break
-                else:
-                    raise
-    raise RuntimeError(last_error)
+                if error.code not in RETRY_CODES:
+                    raise                        
+                await asyncio.sleep(2 * (attempt + 1))
+    return None  
 async def ask(question, history=None, session_id=None):
     collection_name = f"{COLLECTION_NAME}_{session_id}"
     server = StdioServerParameters(
@@ -46,7 +43,7 @@ async def ask(question, history=None, session_id=None):
         env={
             **os.environ,
             "RAG_COLLECTION_NAME": collection_name,
-            "GOOGLE_API_KEY": GOOGLE_API_KEY
+            "GOOGLE_API_KEY": GOOGLE_API_KEY, 
         }
     )
     tool_calls = []
@@ -84,24 +81,24 @@ async def ask(question, history=None, session_id=None):
             for step in range(5):
                 try:
                     response = await call_gemini(contents, settings)
-                except (errors.APIError, RuntimeError) as error:
+                except errors.APIError as error:
+                    return {"answer": f"Gemini API error: {error.message}", "tool_calls": tool_calls}
+
+                if response is None:
                     return {
-                        "answer": f"The AI model is not available right now. Reason: {str(error)[:300]}",
-                        "tool_calls": tool_calls,
-                        "failed": True
+                        "answer": "The AI model is busy right now. Please try again in a minute.",
+                        "tool_calls": tool_calls
                     }
                 if not response.candidates or response.candidates[0].content is None:
                     return {
                         "answer": "No answer received. Please try a different question.",
-                        "tool_calls": tool_calls,
-                        "failed": True
+                        "tool_calls": tool_calls
                     }
                 contents.append(response.candidates[0].content)
                 if not response.function_calls:
                     return {
                         "answer": response.text or "No answer generated.",
-                        "tool_calls": tool_calls,
-                        "failed": False
+                        "tool_calls": tool_calls
                     }
                 results = []
                 for call in response.function_calls:
@@ -124,6 +121,5 @@ async def ask(question, history=None, session_id=None):
                 contents.append(types.Content(role="user", parts=results))
     return {
         "answer": "Please try asking your question again.",
-        "tool_calls": tool_calls,
-        "failed": True
+        "tool_calls": tool_calls
     }

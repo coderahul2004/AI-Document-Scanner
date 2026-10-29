@@ -3,7 +3,7 @@
 An AI chatbot that reads your documents and answers questions about them.
 Upload PDF, DOCX, XLSX, CSV or TXT files, click **Scan files**, and ask anything in the chat.
 
-**Live App:** https://ai-document-scanner-6a6ccdrq9hwtg9k494lsya.streamlit.app/
+**Live App:** 
 **GitHub:** https://github.com/coderahul2004/AI-Document-Scanner
 
 ---
