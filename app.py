@@ -64,7 +64,8 @@ uploaded_files = st.sidebar.file_uploader(
     "Upload files (PDF, DOCX, XLSX, CSV, TXT)",
     type=["pdf", "docx", "xlsx", "csv", "txt"],
     accept_multiple_files=True,
-    key=f"uploader_{st.session_state.uploader_key}"
+    key=f"uploader_{st.session_state.uploader_key}",
+    max_upload_size=20
 )
 if st.sidebar.button("Scan files"):
     if not uploaded_files:
@@ -77,7 +78,7 @@ if st.sidebar.button("Scan files"):
                     save_and_index(uploaded_file)
                 results.append(("success", f"{uploaded_file.name} scanned"))
             except Exception as error:
-                results.append(("error", f"{uploaded_file.name}: {error}"))
+                results.append(("error", f"{uploaded_file.name}: {get_real_error(error)}"))
         st.session_state.scan_results = results
         st.session_state.uploader_key += 1
         st.rerun()
@@ -118,7 +119,6 @@ for message in st.session_state.messages:
         st.write(message["content"])
         if message["role"] == "assistant":
             show_tool_calls(message.get("tool_calls", []))
-
 question = st.chat_input("Ask something about your files...")
 if question:
     history = [m for m in st.session_state.messages if not m.get("error")]
@@ -132,6 +132,7 @@ if question:
                 result = asyncio.run(ask(question, history, session_id=session_id))
                 answer = result["answer"]
                 tool_calls = result["tool_calls"]
+                failed = result.get("failed", False)
             except Exception as error:
                 traceback.print_exception(type(error), error, error.__traceback__)
                 real_error = get_real_error(error)
@@ -143,6 +144,8 @@ if question:
         else:
             st.write(answer)
             show_tool_calls(tool_calls)
+    if failed:
+        st.session_state.messages[-1]["error"] = True
     st.session_state.messages.append(
         {"role": "assistant", "content": answer, "tool_calls": tool_calls, "error": failed}
     )
