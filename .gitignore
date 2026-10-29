@@ -5,3 +5,4 @@ __pycache__/
 venv/
 .venv/
 last_chat.json
+.streamlit/secrets.toml

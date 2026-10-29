@@ -1,12 +1,14 @@
 import os
 import sys
+import asyncio
 from google import genai
-from google.genai import types
+from google.genai import types, errors
 from mcp.client.session import ClientSession
 from mcp.client.stdio import stdio_client, StdioServerParameters
-from config import GOOGLE_API_KEY, MODEL_NAME, COLLECTION_NAME
+from config import GOOGLE_API_KEY, MODEL_NAME, FALLBACK_MODEL, COLLECTION_NAME
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 client = genai.Client(api_key=GOOGLE_API_KEY)
+RETRY_CODES = [429, 500, 503, 504]
 SYSTEM_PROMPT = """
 You are an AI document assistant.
 Use search_documents to answer questions about uploaded files.
@@ -16,13 +18,33 @@ Mention the source filename when possible.
 If information is missing, say it was not found in the documents.
 Reply normally to greetings.
 """
+async def call_gemini(contents, settings):
+    for model in [MODEL_NAME, FALLBACK_MODEL]:
+        for attempt in range(3):
+            try:
+                return await client.aio.models.generate_content(
+                    model=model,
+                    contents=contents,
+                    config=settings
+                )
+            except errors.APIError as error:
+                if error.code == 404:           
+                    break
+                if error.code not in RETRY_CODES:
+                    raise                        
+                await asyncio.sleep(2 * (attempt + 1))
+    return None  
 async def ask(question, history=None, session_id=None):
     collection_name = f"{COLLECTION_NAME}_{session_id}"
     server = StdioServerParameters(
         command=sys.executable,
         args=[os.path.join(BASE_DIR, "mcp_server.py")],
         cwd=BASE_DIR,
-        env={**os.environ, "RAG_COLLECTION_NAME": collection_name}
+        env={
+            **os.environ,
+            "RAG_COLLECTION_NAME": collection_name,
+            "GOOGLE_API_KEY": GOOGLE_API_KEY, 
+        }
     )
     tool_calls = []
 
@@ -42,7 +64,6 @@ async def ask(question, history=None, session_id=None):
                 )
                 for tool in mcp_tools.tools
             ]
-
             contents = []
             for message in (history or [])[-6:]:
                 role = "user" if message["role"] == "user" else "model"
@@ -52,28 +73,34 @@ async def ask(question, history=None, session_id=None):
             contents.append(
                 types.Content(role="user", parts=[types.Part(text=question)])
             )
-
             settings = types.GenerateContentConfig(
                 system_instruction=SYSTEM_PROMPT,
                 tools=tools,
                 temperature=0,
                 automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True)
             )
-
             for step in range(5):
-                response = await client.aio.models.generate_content(
-                    model=MODEL_NAME,
-                    contents=contents,
-                    config=settings
-                )
-                contents.append(response.candidates[0].content)
+                try:
+                    response = await call_gemini(contents, settings)
+                except errors.APIError as error:
+                    return {"answer": f"Gemini API error: {error.message}", "tool_calls": tool_calls}
 
+                if response is None:
+                    return {
+                        "answer": "The AI model is busy right now. Please try again in a minute.",
+                        "tool_calls": tool_calls
+                    }
+                if not response.candidates or response.candidates[0].content is None:
+                    return {
+                        "answer": "No answer received. Please try a different question.",
+                        "tool_calls": tool_calls
+                    }
+                contents.append(response.candidates[0].content)
                 if not response.function_calls:
                     return {
                         "answer": response.text or "No answer generated.",
                         "tool_calls": tool_calls
                     }
-
                 results = []
                 for call in response.function_calls:
                     arguments = dict(call.args or {})

@@ -6,12 +6,15 @@ import asyncio
 import streamlit as st
 from vector import load_file, create_vectorstore, get_vectorstore, delete_document
 from agent import ask
-from config import COLLECTION_NAME
+from config import COLLECTION_NAME, GOOGLE_API_KEY
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 os.chdir(BASE_DIR)
 UPLOAD_ROOT = os.path.join(BASE_DIR, "uploads")
 os.makedirs(UPLOAD_ROOT, exist_ok=True)
 st.set_page_config(page_title="AI Document Scanner", page_icon="📚")
+if not GOOGLE_API_KEY:
+    st.error("GOOGLE_API_KEY is missing. Add it in the .env file (local) or in Secrets (Streamlit Cloud).")
+    st.stop()
 def new_session_id():
     return uuid.uuid4().hex
 if "session_id" not in st.session_state:
@@ -52,13 +55,16 @@ def show_tool_calls(tool_calls):
             for tool in tool_calls:
                 st.write("Tool:", tool["name"])
                 st.write("Input:", tool["args"])
+def get_real_error(error):
+    while getattr(error, "exceptions", None):
+        error = error.exceptions[0]
+    return error
 st.sidebar.title("Documents")
 uploaded_files = st.sidebar.file_uploader(
     "Upload files (PDF, DOCX, XLSX, CSV, TXT)",
     type=["pdf", "docx", "xlsx", "csv", "txt"],
     accept_multiple_files=True,
-    key=f"uploader_{st.session_state.uploader_key}",
-    max_upload_size=200
+    key=f"uploader_{st.session_state.uploader_key}"
 )
 if st.sidebar.button("Scan files"):
     if not uploaded_files:
@@ -94,9 +100,8 @@ else:
             st.rerun()
 st.sidebar.divider()
 if st.sidebar.button("New chat"):
-    old_collection = get_vectorstore(collection_name)
     try:
-        old_collection.delete_collection()
+        get_vectorstore(collection_name).delete_collection()
     except Exception as error:
         print("Could not delete old collection:", error)
     shutil.rmtree(upload_dir, ignore_errors=True)
@@ -113,12 +118,14 @@ for message in st.session_state.messages:
         st.write(message["content"])
         if message["role"] == "assistant":
             show_tool_calls(message.get("tool_calls", []))
+
 question = st.chat_input("Ask something about your files...")
 if question:
-    history = list(st.session_state.messages)
+    history = [m for m in st.session_state.messages if not m.get("error")]
     st.session_state.messages.append({"role": "user", "content": question})
     with st.chat_message("user"):
         st.write(question)
+    failed = False
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
             try:
@@ -127,9 +134,15 @@ if question:
                 tool_calls = result["tool_calls"]
             except Exception as error:
                 traceback.print_exception(type(error), error, error.__traceback__)
-                answer = f"Something went wrong: {type(error).__name__}: {error}"
+                real_error = get_real_error(error)
+                answer = f"Something went wrong: {type(real_error).__name__}: {real_error}"
                 tool_calls = []
-                st.error(answer)
-        st.write(answer)
-        show_tool_calls(tool_calls)
-    st.session_state.messages.append({"role": "assistant", "content": answer, "tool_calls": tool_calls})
+                failed = True
+        if failed:
+            st.error(answer)
+        else:
+            st.write(answer)
+            show_tool_calls(tool_calls)
+    st.session_state.messages.append(
+        {"role": "assistant", "content": answer, "tool_calls": tool_calls, "error": failed}
+    )
